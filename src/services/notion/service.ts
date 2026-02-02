@@ -58,10 +58,21 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
-				// We intentionally avoid strict schema decoding here: Notion response shapes
-				// change over time and we don't want that to become a hard failure.
-				// biome-ignore lint/suspicious/noExplicitAny: Notion response is very wide
-				const statusProp = (page as any)?.properties?.Status;
+				// NOTE: We intentionally avoid strict schema decoding here: Notion response
+				// shapes change over time and we don't want that to become a hard failure.
+				//
+				// Also: we assume the database uses a `Status` property name here (same
+				// assumption as `setNotionStatus`, which updates `properties.Status`).
+				type NotionPageRetrieveResult = {
+					properties?: {
+						Status?: {
+							type?: string;
+							status?: { name?: string | null } | null;
+						};
+					};
+				};
+				const statusProp = (page as NotionPageRetrieveResult)?.properties
+					?.Status;
 				if (!statusProp || statusProp.type !== "status") {
 					return null;
 				}
@@ -231,6 +242,8 @@ export const NotionLive = Layer.effect(
 				}
 
 				let previousStatus: string | null = null;
+				// If the rule is `"*"`, it semantically means "always allow", and we also
+				// skip the extra `pages.retrieve` call as a small perf win.
 				if (requiredPrevious !== "*") {
 					previousStatus = yield* getNotionPageStatusName(pageId);
 					const transitionCheck = isNotionStatusTransitionAllowed({
