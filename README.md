@@ -39,12 +39,26 @@
 
 ## optional (with defaults)
 
-| variable        | description                                               | default       |
-| --------------- | --------------------------------------------------------- | ------------- |
-| `DD_API_KEY`    | Datadog API key added to OTLP trace exporter headers      | `(unset)`     |
-| `NOTION_DRY_RUN`| Skip Notion mutations while still logging intended writes | `false`       |
-| `NODE_ENV`      | Node environment                                          | `development` |
-| `API_VERSION`   | API version reported by the health endpoint               | `0.0.0`       |
+| variable                        | description                                                                 | default       |
+| ------------------------------- | --------------------------------------------------------------------------- | ------------- |
+| `DD_API_KEY`                    | Datadog API key added to OTLP trace exporter headers                        | `(unset)`     |
+| `NOTION_DRY_RUN`                | Skip Notion mutations while still logging intended writes                   | `false`       |
+| `NOTION_STATUS_TRANSITION_RULES`| JSON map of `nextStatus -> allowedPreviousStatuses` to prevent status flips | see below     |
+| `NODE_ENV`                      | Node environment                                                            | `development` |
+| `API_VERSION`                   | API version reported by the health endpoint                                 | `0.0.0`       |
+
+### Notion status transition rules
+
+By default, this service will **only** move Notion tasks between the workflow statuses it controls (currently: `In progress`, `In review`, `PR merged`).
+
+This prevents the webhook from overwriting manual statuses (e.g. `QA ready`) when GitHub events come in.
+
+You can override/extend the rules with `NOTION_STATUS_TRANSITION_RULES`:
+
+```env
+# allow moving to "In review" even if a human has already set the task to "QA ready"
+NOTION_STATUS_TRANSITION_RULES='{"In review":["In progress","In review","QA ready"],"PR merged":"*"}'
+```
 
 Setting `DD_API_KEY` automatically attaches the secret as the `dd-api-key` header on outgoing OTLP trace exports. The value stays redacted inside the Effect config until it is sent.
 

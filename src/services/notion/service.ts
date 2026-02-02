@@ -1,6 +1,6 @@
 import { types } from "node:util";
 import { Client } from "@notionhq/client";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { AppConfig } from "#platform/schema.ts";
 import { Notion } from "#services/notion/api.ts";
 import { NotionRequestFailureError } from "#services/notion/errors.ts";
@@ -12,6 +12,10 @@ import type {
 	NotionFileAttachment,
 	NotionWorkflowStatus,
 } from "#services/notion/schema.ts";
+import {
+	buildNotionStatusTransitionRules,
+	isNotionStatusTransitionAllowed,
+} from "#services/notion/transitions.ts";
 
 export const NotionLive = Layer.effect(
 	Notion,
@@ -23,6 +27,7 @@ export const NotionLive = Layer.effect(
 			notionTaskIdProperty,
 			notionTaskIdPrefix,
 			notionDryRun,
+			notionStatusTransitionRules: notionStatusTransitionRulesOption,
 		} = yield* AppConfig;
 
 		// Create the schema with the prefix from config
@@ -31,6 +36,39 @@ export const NotionLive = Layer.effect(
 		const notion = new Client({
 			auth: Redacted.value(notionToken),
 		});
+
+		const transitionRules = buildNotionStatusTransitionRules({
+			json: Option.getOrUndefined(notionStatusTransitionRulesOption),
+		});
+
+		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
+			function* (pageId: string) {
+				const page = yield* Effect.tryPromise({
+					try: () =>
+						notion.pages.retrieve({
+							page_id: pageId,
+						}),
+
+					catch(error) {
+						return new NotionRequestFailureError({
+							reason: types.isNativeError(error)
+								? error.message
+								: "Unknown Notion error",
+						});
+					},
+				});
+
+				// We intentionally avoid strict schema decoding here: Notion response shapes
+				// change over time and we don't want that to become a hard failure.
+				// biome-ignore lint/suspicious/noExplicitAny: Notion response is very wide
+				const statusProp = (page as any)?.properties?.Status;
+				if (!statusProp || statusProp.type !== "status") {
+					return null;
+				}
+
+				return statusProp.status?.name ?? null;
+			},
+		);
 
 		/**
 		 * Data source ID discovery per 2025-09-03 upgrade guide:
@@ -171,6 +209,8 @@ export const NotionLive = Layer.effect(
 				pageId: string,
 				status: NotionWorkflowStatus,
 			) {
+				const requiredPrevious = transitionRules[status];
+
 				// TODO: there's definitely a cleverer way to do this swapperoo;
 				// probably conditionally swapping out the notion client
 				// or the layer rather than conditionally checking config here?
@@ -178,12 +218,46 @@ export const NotionLive = Layer.effect(
 					yield* Effect.log("🪵 [dry-run] Notion#setNotionStatus() skipped", {
 						pageId,
 						status,
+						requiredPrevious,
 					});
 
 					return {
 						pageId,
 						newStatus: status,
+						statusUpdated: false,
+						previousStatus: null,
+						requiredPrevious,
 					};
+				}
+
+				let previousStatus: string | null = null;
+				if (requiredPrevious !== "*") {
+					previousStatus = yield* getNotionPageStatusName(pageId);
+					const transitionCheck = isNotionStatusTransitionAllowed({
+						currentStatus: previousStatus,
+						nextStatus: status,
+						rules: transitionRules,
+					});
+
+					if (!transitionCheck.allowed) {
+						yield* Effect.log(
+							"🟡 Notion#setNotionStatus() transition blocked",
+							{
+								pageId,
+								previousStatus,
+								nextStatus: status,
+								requiredPrevious: transitionCheck.requiredPrevious,
+							},
+						);
+
+						return {
+							pageId,
+							newStatus: status,
+							statusUpdated: false,
+							previousStatus,
+							requiredPrevious: transitionCheck.requiredPrevious,
+						};
+					}
 				}
 
 				yield* Effect.tryPromise({
@@ -217,6 +291,9 @@ export const NotionLive = Layer.effect(
 				return {
 					pageId,
 					newStatus: status,
+					statusUpdated: true,
+					previousStatus,
+					requiredPrevious,
 				};
 			}),
 

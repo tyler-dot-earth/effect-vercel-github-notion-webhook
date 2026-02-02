@@ -56,6 +56,21 @@ export const handlers = [
 	),
 
 	// Mock pages update endpoint
+	http.get("https://api.notion.com/v1/pages/:pageId", () =>
+		HttpResponse.json({
+			id: MOCK_NOTION_PAGE_ID,
+			properties: {
+				Status: {
+					type: "status",
+					status: {
+						name: "In progress",
+					},
+				},
+			},
+		}),
+	),
+
+	// Mock pages update endpoint
 	http.patch("https://api.notion.com/v1/pages/:pageId", () =>
 		HttpResponse.json({
 			id: MOCK_NOTION_PAGE_ID,
