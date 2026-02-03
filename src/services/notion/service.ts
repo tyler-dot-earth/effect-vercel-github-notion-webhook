@@ -41,9 +41,27 @@ export const NotionLive = Layer.effect(
 			json: Option.getOrUndefined(notionStatusTransitionRulesOption),
 		});
 
+		// NOTE: We intentionally avoid strict schema decoding here: Notion response
+		// shapes change over time and we don't want that to become a hard failure.
+		//
+		// Also: we assume the database uses a `Status` property name here (same
+		// assumption as `setNotionStatus`, which updates `properties.Status`).
+		type NotionPageRetrieveResult = {
+			properties?: {
+				Status?: {
+					type?: string;
+					status?: { name?: string | null } | null;
+				};
+			};
+		};
+
 		const pageStatusCache = new Map<string, string>();
 		const maxCachedPageStatuses = 128;
 		const cachePageStatus = (pageId: string, statusName: string) => {
+			if (pageStatusCache.has(pageId)) {
+				pageStatusCache.delete(pageId);
+			}
+
 			pageStatusCache.set(pageId, statusName);
 
 			if (pageStatusCache.size <= maxCachedPageStatuses) {
@@ -59,7 +77,12 @@ export const NotionLive = Layer.effect(
 		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
 			function* (pageId: string) {
 				if (pageStatusCache.has(pageId)) {
-					return pageStatusCache.get(pageId) ?? null;
+					const cached = pageStatusCache.get(pageId);
+					if (cached === undefined) {
+						return null;
+					}
+					cachePageStatus(pageId, cached);
+					return cached;
 				}
 
 				const page = yield* Effect.tryPromise({
@@ -77,19 +100,6 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
-				// NOTE: We intentionally avoid strict schema decoding here: Notion response
-				// shapes change over time and we don't want that to become a hard failure.
-				//
-				// Also: we assume the database uses a `Status` property name here (same
-				// assumption as `setNotionStatus`, which updates `properties.Status`).
-				type NotionPageRetrieveResult = {
-					properties?: {
-						Status?: {
-							type?: string;
-							status?: { name?: string | null } | null;
-						};
-					};
-				};
 				const statusProp = (page as NotionPageRetrieveResult)?.properties
 					?.Status;
 				if (!statusProp || statusProp.type !== "status") {
@@ -296,7 +306,7 @@ export const NotionLive = Layer.effect(
 					}
 				}
 
-				yield* Effect.tryPromise({
+				const updateResult = yield* Effect.tryPromise({
 					try: () =>
 						notion.pages.update({
 							page_id: pageId,
@@ -318,7 +328,19 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
-				cachePageStatus(pageId, status);
+				let persistedStatus: NotionWorkflowStatus = status;
+				const updatedStatusProp = (updateResult as NotionPageRetrieveResult)
+					?.properties?.Status;
+				if (updatedStatusProp?.type === "status") {
+					const statusName = updatedStatusProp.status?.name;
+					if (
+						typeof statusName === "string" &&
+						Object.hasOwn(transitionRules, statusName)
+					) {
+						persistedStatus = statusName as NotionWorkflowStatus;
+					}
+				}
+				cachePageStatus(pageId, persistedStatus);
 
 				// yield* Effect.log(
 				//     "🪵 Notion#setNotionStatus() performed notion.pages.update, result:",
@@ -328,7 +350,7 @@ export const NotionLive = Layer.effect(
 				// TODO: real return shape
 				return {
 					pageId,
-					newStatus: status,
+					newStatus: persistedStatus,
 					statusUpdated: true,
 					previousStatus,
 					requiredPrevious,
