@@ -207,6 +207,8 @@ export const handlePostRequest = Effect.fn("handlePostRequest")(function* (
 		genId: string;
 		notionPageId: string;
 		newStatus: NotionWorkflowStatus;
+		statusUpdated: boolean;
+		previousStatus: string | null;
 	}> = [];
 
 	const statusName = yield* Schema.decodeUnknown(
@@ -244,6 +246,8 @@ export const handlePostRequest = Effect.fn("handlePostRequest")(function* (
 			genId,
 			notionPageId: statusUpdateResult.pageId,
 			newStatus: statusUpdateResult.newStatus,
+			statusUpdated: statusUpdateResult.statusUpdated,
+			previousStatus: statusUpdateResult.previousStatus,
 		});
 	}
 

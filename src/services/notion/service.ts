@@ -1,6 +1,6 @@
 import { types } from "node:util";
 import { Client } from "@notionhq/client";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import { AppConfig } from "#platform/schema.ts";
 import { Notion } from "#services/notion/api.ts";
 import { NotionRequestFailureError } from "#services/notion/errors.ts";
@@ -12,6 +12,10 @@ import type {
 	NotionFileAttachment,
 	NotionWorkflowStatus,
 } from "#services/notion/schema.ts";
+import {
+	buildNotionStatusTransitionRules,
+	isNotionStatusTransitionAllowed,
+} from "#services/notion/transitions.ts";
 
 export const NotionLive = Layer.effect(
 	Notion,
@@ -23,6 +27,7 @@ export const NotionLive = Layer.effect(
 			notionTaskIdProperty,
 			notionTaskIdPrefix,
 			notionDryRun,
+			notionStatusTransitionRules: notionStatusTransitionRulesOption,
 		} = yield* AppConfig;
 
 		// Create the schema with the prefix from config
@@ -31,6 +36,79 @@ export const NotionLive = Layer.effect(
 		const notion = new Client({
 			auth: Redacted.value(notionToken),
 		});
+
+		const transitionRules = buildNotionStatusTransitionRules({
+			json: Option.getOrUndefined(notionStatusTransitionRulesOption),
+		});
+
+		// NOTE: We intentionally avoid strict schema decoding here: Notion response
+		// shapes change over time and we don't want that to become a hard failure.
+		//
+		// Also: we assume the database uses a `Status` property name here (same
+		// assumption as `setNotionStatus`, which updates `properties.Status`).
+		type NotionPageRetrieveResult = {
+			properties?: {
+				Status?: {
+					type?: string;
+					status?: { name?: string | null } | null;
+				};
+			};
+		};
+
+		const pageStatusCache = new Map<string, string | null>();
+		const maxCachedPageStatuses = 128;
+		const cachePageStatus = (pageId: string, statusName: string | null) => {
+			if (pageStatusCache.has(pageId)) {
+				pageStatusCache.delete(pageId);
+			}
+
+			pageStatusCache.set(pageId, statusName);
+
+			if (pageStatusCache.size <= maxCachedPageStatuses) {
+				return;
+			}
+
+			const oldestKey = pageStatusCache.keys().next().value;
+			if (typeof oldestKey === "string") {
+				pageStatusCache.delete(oldestKey);
+			}
+		};
+
+		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
+			function* (pageId: string) {
+				if (pageStatusCache.has(pageId)) {
+					const cached = pageStatusCache.get(pageId) ?? null;
+					cachePageStatus(pageId, cached);
+					return cached;
+				}
+
+				const page = yield* Effect.tryPromise({
+					try: () =>
+						notion.pages.retrieve({
+							page_id: pageId,
+						}),
+
+					catch(error) {
+						return new NotionRequestFailureError({
+							reason: types.isNativeError(error)
+								? error.message
+								: "Unknown Notion error",
+						});
+					},
+				});
+
+				const statusProp = (page as NotionPageRetrieveResult)?.properties
+					?.Status;
+				if (!statusProp || statusProp.type !== "status") {
+					cachePageStatus(pageId, null);
+					return null;
+				}
+
+				const statusName = statusProp.status?.name ?? null;
+				cachePageStatus(pageId, statusName);
+				return statusName;
+			},
+		);
 
 		/**
 		 * Data source ID discovery per 2025-09-03 upgrade guide:
@@ -171,6 +249,8 @@ export const NotionLive = Layer.effect(
 				pageId: string,
 				status: NotionWorkflowStatus,
 			) {
+				const requiredPrevious = transitionRules[status];
+
 				// TODO: there's definitely a cleverer way to do this swapperoo;
 				// probably conditionally swapping out the notion client
 				// or the layer rather than conditionally checking config here?
@@ -178,12 +258,48 @@ export const NotionLive = Layer.effect(
 					yield* Effect.log("🪵 [dry-run] Notion#setNotionStatus() skipped", {
 						pageId,
 						status,
+						requiredPrevious,
 					});
 
 					return {
 						pageId,
 						newStatus: status,
+						statusUpdated: false,
+						previousStatus: null,
+						requiredPrevious,
 					};
+				}
+
+				let previousStatus: string | null = null;
+				// If the rule is `"*"`, it semantically means "always allow", and we also
+				// skip the extra `pages.retrieve` call as a small perf win.
+				if (requiredPrevious !== "*") {
+					previousStatus = yield* getNotionPageStatusName(pageId);
+					const transitionCheck = isNotionStatusTransitionAllowed({
+						currentStatus: previousStatus,
+						nextStatus: status,
+						rules: transitionRules,
+					});
+
+					if (!transitionCheck.allowed) {
+						yield* Effect.log(
+							"🟡 Notion#setNotionStatus() transition blocked",
+							{
+								pageId,
+								previousStatus,
+								nextStatus: status,
+								requiredPrevious: transitionCheck.requiredPrevious,
+							},
+						);
+
+						return {
+							pageId,
+							newStatus: status,
+							statusUpdated: false,
+							previousStatus,
+							requiredPrevious: transitionCheck.requiredPrevious,
+						};
+					}
 				}
 
 				yield* Effect.tryPromise({
@@ -208,6 +324,8 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
+				cachePageStatus(pageId, status);
+
 				// yield* Effect.log(
 				//     "🪵 Notion#setNotionStatus() performed notion.pages.update, result:",
 				//     result,
@@ -217,6 +335,9 @@ export const NotionLive = Layer.effect(
 				return {
 					pageId,
 					newStatus: status,
+					statusUpdated: true,
+					previousStatus,
+					requiredPrevious,
 				};
 			}),
 

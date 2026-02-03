@@ -78,6 +78,9 @@ const NotionServiceTest = Layer.succeed(Notion, {
 		return yield* Effect.succeed({
 			pageId,
 			newStatus: status,
+			statusUpdated: true,
+			previousStatus: null,
+			requiredPrevious: "*" as const,
 		});
 	}),
 
@@ -309,6 +312,8 @@ describe("Webhook", () => {
 												newStatus: Schema.decodeUnknownSync(
 													NotionStatusFromPullRequestSchema,
 												)(pullRequestForSchema),
+												statusUpdated: true,
+												previousStatus: null,
 											})),
 										);
 									},

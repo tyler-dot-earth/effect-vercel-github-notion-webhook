@@ -13,6 +13,16 @@ export const AppConfig = Config.all({
 	// toggles
 	notionDryRun: Config.withDefault(Config.boolean("NOTION_DRY_RUN"), false),
 
+	/**
+	 * Optional JSON mapping that constrains which Notion status transitions this
+	 * service is allowed to apply.
+	 *
+	 * See README for examples.
+	 */
+	notionStatusTransitionRules: Config.option(
+		Config.string("NOTION_STATUS_TRANSITION_RULES"),
+	),
+
 	// tertiary information
 	nodeEnv: Config.withDefault(Config.string("NODE_ENV"), "development"),
 	apiVersion: Config.withDefault(Config.string("API_VERSION"), "0.0.0"),

@@ -81,6 +81,9 @@ describe("services/notion", () => {
 							assert.deepEqual(result, {
 								pageId: MOCK_NOTION_PAGE_ID,
 								newStatus: "In progress",
+								statusUpdated: true,
+								previousStatus: "In progress",
+								requiredPrevious: ["In progress", "In review"],
 							});
 						}).pipe(Effect.provide(NotionLive)),
 						AppConfigProviderTest,
@@ -109,6 +112,9 @@ describe("services/notion", () => {
 						assert.deepEqual(result, {
 							pageId: MOCK_NOTION_PAGE_ID,
 							newStatus: "In progress",
+							statusUpdated: false,
+							previousStatus: null,
+							requiredPrevious: ["In progress", "In review"],
 						});
 					}).pipe(Effect.provide(NotionLive)),
 					AppConfigProviderDryRun,

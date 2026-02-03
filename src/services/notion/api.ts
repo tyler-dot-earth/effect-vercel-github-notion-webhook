@@ -3,6 +3,7 @@ import type { ConfigError } from "effect/ConfigError";
 import type { ParseError } from "effect/ParseResult";
 import type { NotionRequestFailureError } from "#services/notion/errors.ts";
 import type { NotionWorkflowStatus } from "#services/notion/schema.ts";
+import type { NotionStatusTransitionRule } from "#services/notion/transitions.ts";
 
 export class Notion extends Context.Tag("Notion")<
 	Notion,
@@ -39,6 +40,9 @@ export class Notion extends Context.Tag("Notion")<
 			{
 				pageId: string;
 				newStatus: NotionWorkflowStatus;
+				statusUpdated: boolean;
+				previousStatus: string | null;
+				requiredPrevious: NotionStatusTransitionRule;
 			},
 			NotionRequestFailureError,
 			never
