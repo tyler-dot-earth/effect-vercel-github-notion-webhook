@@ -55,9 +55,9 @@ export const NotionLive = Layer.effect(
 			};
 		};
 
-		const pageStatusCache = new Map<string, string>();
+		const pageStatusCache = new Map<string, string | null>();
 		const maxCachedPageStatuses = 128;
-		const cachePageStatus = (pageId: string, statusName: string) => {
+		const cachePageStatus = (pageId: string, statusName: string | null) => {
 			if (pageStatusCache.has(pageId)) {
 				pageStatusCache.delete(pageId);
 			}
@@ -77,10 +77,7 @@ export const NotionLive = Layer.effect(
 		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
 			function* (pageId: string) {
 				if (pageStatusCache.has(pageId)) {
-					const cached = pageStatusCache.get(pageId);
-					if (cached === undefined) {
-						return null;
-					}
+					const cached = pageStatusCache.get(pageId) ?? null;
 					cachePageStatus(pageId, cached);
 					return cached;
 				}
@@ -103,13 +100,12 @@ export const NotionLive = Layer.effect(
 				const statusProp = (page as NotionPageRetrieveResult)?.properties
 					?.Status;
 				if (!statusProp || statusProp.type !== "status") {
+					cachePageStatus(pageId, null);
 					return null;
 				}
 
 				const statusName = statusProp.status?.name ?? null;
-				if (typeof statusName === "string") {
-					cachePageStatus(pageId, statusName);
-				}
+				cachePageStatus(pageId, statusName);
 				return statusName;
 			},
 		);
@@ -328,19 +324,16 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
-				let persistedStatus: NotionWorkflowStatus = status;
+				let statusNameToCache: string | null = status;
 				const updatedStatusProp = (updateResult as NotionPageRetrieveResult)
 					?.properties?.Status;
 				if (updatedStatusProp?.type === "status") {
 					const statusName = updatedStatusProp.status?.name;
-					if (
-						typeof statusName === "string" &&
-						Object.hasOwn(transitionRules, statusName)
-					) {
-						persistedStatus = statusName as NotionWorkflowStatus;
+					if (typeof statusName === "string") {
+						statusNameToCache = statusName;
 					}
 				}
-				cachePageStatus(pageId, persistedStatus);
+				cachePageStatus(pageId, statusNameToCache);
 
 				// yield* Effect.log(
 				//     "🪵 Notion#setNotionStatus() performed notion.pages.update, result:",
@@ -350,7 +343,7 @@ export const NotionLive = Layer.effect(
 				// TODO: real return shape
 				return {
 					pageId,
-					newStatus: persistedStatus,
+					newStatus: status,
 					statusUpdated: true,
 					previousStatus,
 					requiredPrevious,
