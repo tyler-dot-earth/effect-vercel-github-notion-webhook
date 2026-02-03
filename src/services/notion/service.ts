@@ -41,7 +41,20 @@ export const NotionLive = Layer.effect(
 			json: Option.getOrUndefined(notionStatusTransitionRulesOption),
 		});
 
-		const pageStatusCache = new Map<string, string | null>();
+		const pageStatusCache = new Map<string, string>();
+		const maxCachedPageStatuses = 128;
+		const cachePageStatus = (pageId: string, statusName: string) => {
+			pageStatusCache.set(pageId, statusName);
+
+			if (pageStatusCache.size <= maxCachedPageStatuses) {
+				return;
+			}
+
+			const oldestKey = pageStatusCache.keys().next().value;
+			if (typeof oldestKey === "string") {
+				pageStatusCache.delete(oldestKey);
+			}
+		};
 
 		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
 			function* (pageId: string) {
@@ -80,12 +93,13 @@ export const NotionLive = Layer.effect(
 				const statusProp = (page as NotionPageRetrieveResult)?.properties
 					?.Status;
 				if (!statusProp || statusProp.type !== "status") {
-					pageStatusCache.set(pageId, null);
 					return null;
 				}
 
 				const statusName = statusProp.status?.name ?? null;
-				pageStatusCache.set(pageId, statusName);
+				if (typeof statusName === "string") {
+					cachePageStatus(pageId, statusName);
+				}
 				return statusName;
 			},
 		);
@@ -303,6 +317,8 @@ export const NotionLive = Layer.effect(
 						});
 					},
 				});
+
+				cachePageStatus(pageId, status);
 
 				// yield* Effect.log(
 				//     "🪵 Notion#setNotionStatus() performed notion.pages.update, result:",
