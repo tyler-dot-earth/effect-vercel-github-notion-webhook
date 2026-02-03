@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import {
 	NotionWorkflowStatus,
 	type NotionWorkflowStatus as NotionWorkflowStatusType,
@@ -29,18 +30,34 @@ export const defaultNotionStatusTransitionRules = {
 	[NotionWorkflowStatus.PRMerged]: "*",
 } as const satisfies NotionStatusTransitionRules;
 
+const NotionStatusTransitionRuleJsonSchema = Schema.Union(
+	Schema.Literal("*"),
+	Schema.Array(Schema.String),
+	Schema.Null,
+);
+
+const NotionStatusTransitionRulesJsonSchema = Schema.parseJson(
+	Schema.Record({
+		// We intentionally accept any string keys so users can share configs across
+		// multiple Notion workflows; unknown keys are filtered below.
+		key: Schema.String,
+		value: NotionStatusTransitionRuleJsonSchema,
+	}),
+);
+
 export const parseNotionStatusTransitionRulesJson = (
 	json: string,
 ): Partial<NotionStatusTransitionRules> => {
-	const parsed: unknown = JSON.parse(json);
+	let obj: Schema.Schema.Type<typeof NotionStatusTransitionRulesJsonSchema>;
 
-	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+	try {
+		obj = Schema.decodeUnknownSync(NotionStatusTransitionRulesJsonSchema)(json);
+	} catch (error) {
 		throw new Error(
 			"NOTION_STATUS_TRANSITION_RULES must be a JSON object mapping status -> rule",
+			{ cause: error },
 		);
 	}
-
-	const obj = parsed as Record<string, unknown>;
 	const out: Partial<
 		Record<NotionWorkflowStatusType, NotionStatusTransitionRule>
 	> = {};
@@ -56,9 +73,8 @@ export const parseNotionStatusTransitionRulesJson = (
 			continue;
 		}
 
-		if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
-			out[key as NotionWorkflowStatusType] = value;
-		}
+		// `NotionStatusTransitionRuleJsonSchema` ensures arrays are `string[]`.
+		out[key as NotionWorkflowStatusType] = value;
 	}
 
 	return out;
