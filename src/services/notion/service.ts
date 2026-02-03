@@ -41,8 +41,14 @@ export const NotionLive = Layer.effect(
 			json: Option.getOrUndefined(notionStatusTransitionRulesOption),
 		});
 
+		const pageStatusCache = new Map<string, string | null>();
+
 		const getNotionPageStatusName = Effect.fn("getNotionPageStatusName")(
 			function* (pageId: string) {
+				if (pageStatusCache.has(pageId)) {
+					return pageStatusCache.get(pageId) ?? null;
+				}
+
 				const page = yield* Effect.tryPromise({
 					try: () =>
 						notion.pages.retrieve({
@@ -74,10 +80,13 @@ export const NotionLive = Layer.effect(
 				const statusProp = (page as NotionPageRetrieveResult)?.properties
 					?.Status;
 				if (!statusProp || statusProp.type !== "status") {
+					pageStatusCache.set(pageId, null);
 					return null;
 				}
 
-				return statusProp.status?.name ?? null;
+				const statusName = statusProp.status?.name ?? null;
+				pageStatusCache.set(pageId, statusName);
+				return statusName;
 			},
 		);
 
