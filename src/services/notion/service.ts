@@ -302,7 +302,7 @@ export const NotionLive = Layer.effect(
 					}
 				}
 
-				const updateResult = yield* Effect.tryPromise({
+				yield* Effect.tryPromise({
 					try: () =>
 						notion.pages.update({
 							page_id: pageId,
@@ -324,16 +324,7 @@ export const NotionLive = Layer.effect(
 					},
 				});
 
-				let statusNameToCache: string | null = status;
-				const updatedStatusProp = (updateResult as NotionPageRetrieveResult)
-					?.properties?.Status;
-				if (updatedStatusProp?.type === "status") {
-					const statusName = updatedStatusProp.status?.name;
-					if (typeof statusName === "string") {
-						statusNameToCache = statusName;
-					}
-				}
-				cachePageStatus(pageId, statusNameToCache);
+				cachePageStatus(pageId, status);
 
 				// yield* Effect.log(
 				//     "🪵 Notion#setNotionStatus() performed notion.pages.update, result:",
